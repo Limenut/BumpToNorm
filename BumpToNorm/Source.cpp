@@ -15,14 +15,10 @@ SDL_Window* gWindow = nullptr;
 SDL_Renderer* gRenderer = nullptr;
 
 SDL_Surface *bumpSurf;
-SDL_Surface *normalSurf;
+//SDL_Surface *normalSurf;
 
 std::vector<Uint8> valueMap;
 
-std::vector<vector3D> horiNormals;
-std::vector<vector3D> vertiNormals;
-std::vector<vector3D> horiNormals;
-std::vector<vector3D> horiNormals;
 
 class vector3D
 {
@@ -64,6 +60,11 @@ double vector3D::lenght()
 {
 	return sqrt(x*x + y*y + z*z);
 }
+
+std::vector<vector3D> horiNormals;
+std::vector<vector3D> vertiNormals;
+std::vector<vector3D> westNormals;
+std::vector<vector3D> eastNormals;
 
 bool init()
 {
@@ -202,6 +203,74 @@ vector3D getAverageNormal(int x, int y, double depth)
 	return finalVec;
 }
 
+void constructNormals(SDL_Surface *surf, double depth)
+{
+	int width = surf->w;
+	int height = surf->h;
+
+	Uint32* pixels = (Uint32 *)surf->pixels;
+
+	std::vector<Uint8> values;
+	for (int i = 0; i < width*height; i++)
+	{
+		Uint8 val = Uint8((pixels[i] & surf->format->Rmask) / 0x1000000);	//uses only red color channel, shift to 0-255 range
+		values.push_back(val);
+	}
+
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width - 1; x++)
+		{
+			double val1 = values[width*y + x];
+			double val2 = values[width*y + x + 1];
+			
+			vector3D vec = { val1 - val2, 0, depth };
+			vec.normalize();
+			horiNormals.push_back(vec);
+		}
+	}
+	for (int y = 0; y < height - 1; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			double val1 = values[width*y + x];
+			double val2 = values[width*(y+1) + x];
+
+			vector3D vec = { 0, val1 - val2, depth };
+			vec.normalize();
+			vertiNormals.push_back(vec);
+		}
+	}
+
+
+}
+
+vector3D getAverageNormal_b2n(int x, int y)
+{
+	int height = bumpSurf->h;
+	int width = bumpSurf->w;
+	vector3D finalVec = {0,0,0};
+
+	if (y > 0)
+	{
+		finalVec = finalVec + vertiNormals[width*(y - 1) + x];
+	}
+	if (x > 0)
+	{
+		finalVec = finalVec + horiNormals[(width-1)*y + x - 1];
+	}
+	if (x < width - 1)
+	{
+		finalVec = finalVec + horiNormals[(width-1)*y + x];
+	}
+	if (y < height - 1)
+	{
+		finalVec = finalVec + vertiNormals[width + x];
+	}
+
+	finalVec.normalize();
+	return finalVec;
+}
 
 int main(int argc, char *argv[])
 {
@@ -223,7 +292,7 @@ int main(int argc, char *argv[])
 		//get pixel values into valueMap
 		extractPixels(bumpSurf);
 
-		normalSurf = SDL_CreateRGBSurface
+		SDL_Surface *normalSurf = SDL_CreateRGBSurface
 			(
 				0,
 				bumpSurf->w,
