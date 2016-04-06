@@ -11,15 +11,6 @@
 #undef main
 #endif
 
-SDL_Window* gWindow = nullptr;
-SDL_Renderer* gRenderer = nullptr;
-
-SDL_Surface *bumpSurf;
-//SDL_Surface *normalSurf;
-
-std::vector<Uint8> valueMap;
-
-
 class vector3D
 {
 public:
@@ -75,9 +66,6 @@ bool init()
 		return false;
 	}
 
-	//Initialize renderer color
-	SDL_SetRenderDrawColor(gRenderer, 0xFF, 0xFF, 0xFF, 0xFF);
-
 	//Initialize PNG loading
 	int imgFlags = IMG_INIT_PNG;
 	if (!(IMG_Init(imgFlags) & imgFlags))
@@ -91,116 +79,9 @@ bool init()
 
 void close()
 {
-	//Destroy global things	
-	if (gRenderer)
-	{
-		SDL_DestroyRenderer(gRenderer);
-	}
-
-	if (gWindow)
-	{
-		SDL_DestroyWindow(gWindow);
-	}
 	//Quit SDL subsystems
 	IMG_Quit();
 	SDL_Quit();
-}
-
-void extractPixels(SDL_Surface *surf)
-{
-	Uint32* pixels = (Uint32 *)surf->pixels;
-	
-	//807934 = magic number
-	for (int i = 0; i < surf->w*surf->h; i++)
-	{
-		Uint8 val = Uint8((pixels[i] & surf->format->Rmask) / 0x1000000);	//uses only red color channel, shift to 0-255 range
-		valueMap.push_back(val);
-		//std::cout << std::hex << (surf->format->Rmask / 0x1000000) << std::endl;
-	}
-}
-
-vector3D getAverageNormal(int x, int y, double depth)
-{
-	double tl;		//topleft
-	double tm;		//topmiddle
-	double tr;		//topright
-	double ml;		//middleleft
-	double mid;		//middle
-	double mr;		//middleright
-	double bl;		//bottomleft
-	double bm;		//bottommiddle
-	double br;		//bottomright
-
-	std::vector<vector3D> normals;
-	std::vector<vector3D> dia_normals;
-
-	mid = valueMap[bumpSurf->w*y + x];
-	if (y > 0)
-	{
-		tm = valueMap[bumpSurf->w*(y - 1) + x];
-		vector3D vec = { 0, tm - mid, depth };
-		normals.push_back(vec);
-
-		if (x > 0)
-		{
-			tl = valueMap[bumpSurf->w*(y - 1) + x - 1];
-			vector3D vec = { (tl - mid)/sqrt(2), (tl - mid) / sqrt(2), depth*sqrt(2) }; //check math later
-			dia_normals.push_back(vec);
-		}
-		if (x < bumpSurf->w - 1)
-		{
-			tr = valueMap[bumpSurf->w*(y - 1) + x + 1];
-			vector3D vec = { (mid - tr)/sqrt(2), (tr - mid)/sqrt(2), depth*sqrt(2) }; //check math later
-			dia_normals.push_back(vec);
-		}
-	}
-	if (x > 0)
-	{
-		ml = valueMap[bumpSurf->w*y + x - 1];
-		vector3D vec = { ml - mid, 0, depth };
-		normals.push_back(vec);
-	}
-	if (x < bumpSurf->w - 1)
-	{
-		mr = valueMap[bumpSurf->w*y + x + 1];
-		vector3D vec = { mid - mr, 0, depth };
-		normals.push_back(vec);
-	}
-	if (y < bumpSurf->h - 1)
-	{
-		bm = valueMap[bumpSurf->w*(y + 1) + x];
-		vector3D vec = { 0, mid - bm, depth };
-		normals.push_back(vec);
-
-		if (x > 0)
-		{
-			bl = valueMap[bumpSurf->w*(y + 1) + x - 1];
-			vector3D vec = { (bl - mid) / sqrt(2), (mid - bl) / sqrt(2), depth*sqrt(2) }; //check math later
-			dia_normals.push_back(vec);
-		}
-		if (x < bumpSurf->w - 1)
-		{
-			br = valueMap[bumpSurf->w*(y + 1) + x + 1];
-			vector3D vec = { (mid - br) / sqrt(2), (mid - br) / sqrt(2), depth*sqrt(2) }; //check math later
-			dia_normals.push_back(vec);
-		}
-	}
-
-	vector3D finalVec = { 0,0,0 };
-	for (auto& i : normals)
-	{
-		i.normalize();
-		finalVec = finalVec + i;
-	}
-	for (auto& i : dia_normals)
-	{
-		i.normalize();
-		i = i / sqrt(2); //weighting
-		finalVec = finalVec + i;
-	}
-
-	finalVec.normalize();
-	return finalVec;
 }
 
 void constructNormals(SDL_Surface *surf, double depth)
@@ -241,32 +122,72 @@ void constructNormals(SDL_Surface *surf, double depth)
 			vertiNormals.push_back(vec);
 		}
 	}
+	for (int y = 0; y < height - 1; y++)
+	{
+		for (int x = 0; x < width - 1; x++)
+		{
+			double val1 = values[width*y + x];
+			double val2 = values[width*(y+1) + x + 1];
 
+			vector3D vec = { (val1 - val2) / sqrt(2), (val1 - val2) / sqrt(2), depth*sqrt(2) };
+			vec.normalize();
+			westNormals.push_back(vec);
+		}
+	}
+	for (int y = 0; y < height - 1; y++)
+	{
+		for (int x = 0; x < width - 1; x++)
+		{
+			double val1 = values[width*y + x + 1];
+			double val2 = values[width*(y+1) + x];
 
+			vector3D vec = { (val2 - val1) / sqrt(2), (val1 - val2) / sqrt(2), depth*sqrt(2) };
+			vec.normalize();
+			eastNormals.push_back(vec);
+		}
+	}
 }
 
-vector3D getAverageNormal_b2n(int x, int y)
+vector3D getAverageNormal_b2n(SDL_Surface *surf, int x, int y)
 {
-	int height = bumpSurf->h;
-	int width = bumpSurf->w;
+	int height = surf->h;
+	int width = surf->w;
 	vector3D finalVec = {0,0,0};
 
-	if (y > 0)
+	if (y > 0)								//top
 	{
 		finalVec = finalVec + vertiNormals[width*(y - 1) + x];
 	}
-	if (x > 0)
+	if (x > 0)								//left
 	{
 		finalVec = finalVec + horiNormals[(width-1)*y + x - 1];
 	}
-	if (x < width - 1)
+	if (x < width - 1)						//right
 	{
 		finalVec = finalVec + horiNormals[(width-1)*y + x];
 	}
-	if (y < height - 1)
+	if (y < height - 1)						//bottom
 	{
-		finalVec = finalVec + vertiNormals[width + x];
+		finalVec = finalVec + vertiNormals[width*y + x];
 	}
+
+	if (y > 0 && x > 0)						//top left
+	{
+		finalVec = finalVec + (westNormals[(width-1)*(y - 1) + x - 1] / sqrt(2));
+	}
+	if (y < height - 1 && x < width - 1)	//bottom right
+	{
+		finalVec = finalVec + (westNormals[(width-1)*y + x] / sqrt(2));
+	}
+	if (y > 0 && x < width - 1)				//top right
+	{
+		finalVec = finalVec + (eastNormals[(width-1)*(y - 1) + x] / sqrt(2));
+	}
+	if (y < height - 1 && x > 0)			//bottom left
+	{
+		finalVec = finalVec + (eastNormals[(width-1)*y + x - 1] / sqrt(2));
+	}
+
 
 	finalVec.normalize();
 	return finalVec;
@@ -275,22 +196,24 @@ vector3D getAverageNormal_b2n(int x, int y)
 int main(int argc, char *argv[])
 {
 	init();
-
+	SDL_Surface *bumpSurf = nullptr;
+	
 	double depth = 0.5;
 
 	for (int i = 1; i < argc; i++)
-	{
+	{	
 		std::string fileName(argv[i]);
 		if (!(bumpSurf = IMG_Load(argv[i])))
 		{
-			std::cout << "Failed to load image " << argv << std::endl;
+			std::cout << "Failed to load image " << fileName << std::endl;
 			continue;
 		}		
+		std::cout << "processing " << fileName << "...";
 
 		bumpSurf = SDL_ConvertSurfaceFormat(bumpSurf, SDL_PIXELFORMAT_RGBA8888, 0);	//convert to better format
 
 		//get pixel values into valueMap
-		extractPixels(bumpSurf);
+		constructNormals(bumpSurf, depth);
 
 		SDL_Surface *normalSurf = SDL_CreateRGBSurface
 			(
@@ -310,7 +233,7 @@ int main(int argc, char *argv[])
 		{
 			for (int x = 0; x < bumpSurf->w; x++)
 			{
-				vector3D normal = getAverageNormal(x, y, depth);
+				vector3D normal = getAverageNormal_b2n(bumpSurf, x, y);
 				Uint8 red = Uint8((normal.x + 1.0) / 2 * 255.0 + 0.5);
 				Uint8 green = Uint8((normal.y + 1.0) / 2 * 255.0 + 0.5);
 				Uint8 blue = Uint8((normal.z + 1.0) / 2 * 255.0 + 0.5);
@@ -326,7 +249,17 @@ int main(int argc, char *argv[])
 		fileName.erase(t);
 		fileName += "_b2n.bmp";
 		SDL_SaveBMP(normalSurf, fileName.c_str());
-		std::cout << fileName << " processed" << std::endl;
+		std::cout << "\tdone" << std::endl;
+
+		//cleanup
+		horiNormals.clear();
+		vertiNormals.clear();
+		westNormals.clear();
+		eastNormals.clear();
+		SDL_FreeSurface(bumpSurf);
+		SDL_FreeSurface(normalSurf);
+		bumpSurf = nullptr;
+		normalSurf = nullptr;
 	}
 
 	close();
